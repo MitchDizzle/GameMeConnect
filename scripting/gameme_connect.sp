@@ -1,6 +1,6 @@
 #pragma semicolon 1
 #include <SteamWorks>
-#define PLUGIN_VERSION			  "1.1.0"
+#define PLUGIN_VERSION			  "1.1.1"
 public Plugin myinfo = {
 	name = "GameMe Connect Message",
 	author = "Mitchell",
@@ -28,8 +28,8 @@ int iMthd = 0;
 
 public OnPluginStart() {	
 	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin",  FCVAR_PLUGIN);
-	hRedirect = CreateConVar("sm_gmconnect_redirect", "http://mtch.tech/gameme/gamemeconnect.php", "Link to the PHP script, hosted on your site",  FCVAR_PLUGIN);
-	hAccount = CreateConVar("sm_gmconnect_account", "disc-ff", "The account",  FCVAR_PLUGIN);
+	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site",  FCVAR_PLUGIN);
+	hAccount = CreateConVar("sm_gmconnect_account", "", "The account",  FCVAR_PLUGIN);
 	hFormat = CreateConVar("sm_gmconnect_format", DEFFORMAT, "The displayed message",  FCVAR_PLUGIN);
 	hFlag = CreateConVar("sm_gmconnect_flag", "b", "Flag required to see the connect message",  FCVAR_PLUGIN);
 	hGame = CreateConVar("sm_gmconnect_game", "", "Game to look up; Tf2- 'tf2', CSGO- 'csgo'.",  FCVAR_PLUGIN);
