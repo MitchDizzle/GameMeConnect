@@ -1,6 +1,7 @@
 #pragma semicolon 1
+#include <regex>
 #include <SteamWorks>
-#define PLUGIN_VERSION			  "1.1.11"
+#define PLUGIN_VERSION			  "1.2.0"
 public Plugin myinfo = {
 	name = "GameMe Connect Message",
 	author = "Mitchell",
@@ -9,7 +10,7 @@ public Plugin myinfo = {
 	url = "http://mtch.tech"
 };
 
-#define DEFFORMAT "{03}{name}{01} connected. (#{04}{rank}{01}, K{0B}{kills}{01}, D{0F}{deaths}{01}, T{10}{ftime}{01})"
+#define DEFFORMAT "{03}{name}{01} connected. (#{04}{rank}{01}, K{0B}{kills}{01}, D{0F}{deaths}{01}, T{10}{time}{01})"
 ConVar hEnable;
 ConVar hRedirect;
 ConVar hAccount;
@@ -24,9 +25,12 @@ char sFormat[512] = DEFFORMAT;
 int iFlagBits = 2;
 char sGame[12] = "";
 int iMthd = 0;
+#define MAXPOST 10
+char postList[MAXPOST][2][24];
+char postCount;
 
-
-public OnPluginStart() {	
+public OnPluginStart() {
+	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
 	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin",  FCVAR_PLUGIN);
 	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site",  FCVAR_PLUGIN);
 	hAccount = CreateConVar("sm_gmconnect_account", "", "The account",  FCVAR_PLUGIN);
@@ -45,17 +49,24 @@ public OnPluginStart() {
 
 	AutoExecConfig(true, "GameMeConnect");
 
+	char tempString[512];
 	GetConVarString(hRedirect, sRedirect, sizeof(sRedirect));
 	GetConVarString(hAccount, sAccount, sizeof(sAccount));
-	GetConVarString(hFormat, sFormat, sizeof(sFormat));
+	GetConVarString(hFormat, tempString, sizeof(tempString));
+	parseFields(tempString, sFormat, sizeof(sFormat));
 	GetConVarString(hGame, sGame, sizeof(sGame));
 	iMthd = GetConVarInt(hMethod);
-	char tempString[12];
+	GetConVarString(hFlag, tempString, sizeof(tempString));
 	iFlagBits = ReadFlagString(tempString);
 
-	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
-
 	HookEvent("player_spawn", Event_Spawn);
+	
+	RegConsoleCmd("gmc", Gmc);
+}
+
+public Action Gmc(int client, int args) {
+	RequestSteamId(2, "STEAM_0:0:23614669");
+	return Plugin_Continue;
 }
 
 public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
@@ -67,11 +78,12 @@ public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValu
 		strcopy(sAccount, sizeof(sAccount), newValue);
 	} else if(convar == hFormat) {
 		strcopy(sFormat, sizeof(sFormat), newValue);
+		parseFields(newValue, sFormat, sizeof(sFormat));
 	} else if(convar == hFlag) {
 		iFlagBits = ReadFlagString(newValue);
 	} else if(convar == hGame) {
 		strcopy(sGame, sizeof(sGame), newValue);
-	} else if(convar == hGame) {
+	} else if(convar == hMethod) {
 		iMthd = StringToInt(newValue);
 	}
 }
@@ -90,7 +102,34 @@ public Action Event_Spawn(Event event, const char[] name, bool dontBroadcast) {
 	return Plugin_Continue;
 }
 
-public void formatAndDisplay(int client, const char[] response) {
+public void formatAndDisplay(int client, KeyValues kv) {
+	char sFormattedStr[512];
+	Format(sFormattedStr, sizeof(sFormattedStr), "%s%s", StrEqual(sGame, "csgo") ? " " : "", sFormat);
+	char tempString[64];
+	for(int i = 0; i < postCount; i++)	{
+		if(StrEqual(postList[i][0], "{name}", false)) {
+			GetClientName(client, tempString, sizeof(tempString));
+		} else {
+			kv.GetString(postList[i][1], tempString, sizeof(tempString), "NULL");
+		}
+		if(StrEqual(postList[i][0], "{time}", false)) {
+			formatTime(StringToFloat(tempString), tempString);
+		}
+		ReplaceString(sFormattedStr, sizeof(sFormattedStr), postList[i][0], tempString, false);
+	}
+	PrintToServer(sFormattedStr);
+	if(iFlagBits == 0) {
+		PrintToChatAll(sFormattedStr);
+	} else {
+		for(new i = 1; i <= MaxClients; i++) {
+			if(IsClientInGame(i) && GetUserFlagBits(i)&iFlagBits) {
+				PrintToChat(i, sFormattedStr);
+			}
+		}
+	}
+}
+
+public void formatAndDisplay_OLD(int client, const char[] response) {
 	char buffers[5][32];
 	ExplodeString(response, ";", buffers, 5, 32);	
 	char sFormattedStr[512];
@@ -113,7 +152,6 @@ public void formatAndDisplay(int client, const char[] response) {
 		ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{name}", clientName, false);
 	}
 	PrintToServer(sFormattedStr);
-	ReplaceColors(sFormattedStr, sizeof(sFormattedStr));
 	if(iFlagBits == 0) {
 		PrintToChatAll(sFormattedStr);
 	} else {
@@ -125,34 +163,17 @@ public void formatAndDisplay(int client, const char[] response) {
 	}
 }
 
-public void ReplaceColors(char[] buffer, size) {
-	char tempString[6];
-	char tempChar[6];
-	for(int i=1;i<=16;i++) {
-		Format(tempString, 6, "{%02X}", i);
-		Format(tempChar, 6, "%c", i);
-		ReplaceString(buffer, size, tempString, tempChar, false);
-	}
-}
-
-public void formatTime(float time, char[] buffer) {
-	int Days = RoundToFloor(time / 60.0 / 60.0 / 24.0) % 60;
-	int Hours = RoundToFloor(time / 60.0 / 60.0) % 60;
-	int Mins = RoundToFloor(time / 60.0) % 60;
-	int Secs = RoundToFloor(time) % 60;
-	if(Days > 0) Format(buffer, 64, "%02d:%02d:%02d:%02d", Days, Hours, Mins, Secs);
-	else if(Hours > 0) Format(buffer, 64, "%02d:%02d:%02d", Hours, Mins, Secs);
-	else if(Mins > 0) Format(buffer, 64, "%02d:%02d", Mins, Secs);
-	else if(Secs > 0) Format(buffer, 64, "%02ds", Secs);
-	else Format(buffer, 64, "NEW");
-}
-
 public void RequestPlayerInfo(client) {
 	// Create params
 	char sSteamId[32];
 	int userId = GetClientUserId(client);
 	GetClientAuthId(client, AuthId_Steam2, sSteamId, sizeof(sSteamId));
-	Handle hRequest = SteamWorks_CreateHTTPRequest(k_EHTTPMethodGET, sRedirect);
+	RequestSteamId(userId, sSteamId);
+}
+
+public void RequestSteamId(userId, const char[] steamId) {
+	// Create params
+	Handle hRequest = SteamWorks_CreateHTTPRequest(k_EHTTPMethodPOST, sRedirect);
 	if(hRequest == INVALID_HANDLE) {
 		LogError("ERROR hRequest(%i): %s", hRequest, sRedirect);
 		return;
@@ -161,7 +182,12 @@ public void RequestPlayerInfo(client) {
 	SteamWorks_SetHTTPRequestHeaderValue(hRequest, "Cache-Control", "no-cache");
 	SteamWorks_SetHTTPRequestGetOrPostParameter(hRequest, "a", sAccount);
 	SteamWorks_SetHTTPRequestGetOrPostParameter(hRequest, "g", sGame);
-	SteamWorks_SetHTTPRequestGetOrPostParameter(hRequest, "id", sSteamId);
+	SteamWorks_SetHTTPRequestGetOrPostParameter(hRequest, "id", steamId);
+	for(int i = 0; i < postCount; i++)	{
+		if(!StrEqual(postList[i][0], "") && !StrEqual(postList[i][0], "{name}", false)) {
+			SteamWorks_SetHTTPRequestGetOrPostParameter(hRequest, postList[i][1], "");
+		}
+	}
 	SteamWorks_SetHTTPCallbacks(hRequest, OnSteamWorksHTTPComplete);
 	SteamWorks_SetHTTPRequestContextValue(hRequest, userId);
 	SteamWorks_SendHTTPRequest(hRequest);
@@ -182,11 +208,74 @@ public OnSteamWorksHTTPComplete(Handle:hRequest, bool:bFailure, bool:bRequestSuc
 			LogError(response);
 			return;
 		}
-		formatAndDisplay(client, response);
+		if(StrContains(response, "\"gmc\"") >= 0) {
+			//Convert to KeyValue
+			KeyValues tempKV = CreateKeyValues("gmc");
+			if(StringToKeyValues(tempKV, response, "gmc")) {
+				formatAndDisplay(client, tempKV);
+			}
+			delete tempKV;
+		} else {
+			formatAndDisplay_OLD(client, response);
+			LogError("Please update the php script.");
+		}
 	} else {
 		decl String:sError[256];
 		FormatEx(sError, sizeof(sError), "SteamWorks error (status code %i). Request successful: %s", _:eStatusCode, bRequestSuccessful ? "True" : "False");
 		LogError(sError);
 	}
 	delete hRequest;
+}
+
+public bool parseFields(const char[] buffer, char[] exportString, int size) {
+	static Regex staticRegex;
+	if(!staticRegex) {
+		char errorString[32];
+		staticRegex = new Regex("{[a-zA-Z]+}", PCRE_UTF8|PCRE_EXTENDED|PCRE_UNGREEDY|PCRE_DOLLAR_ENDONLY, errorString, sizeof(errorString));
+		if(!staticRegex) {
+			SetFailState("Could not generate RegEx! %s", errorString);
+		}
+	}
+	postCount = 0;
+	char tempString[32];
+	char tempBuffer[512];
+	strcopy(tempBuffer, sizeof(tempBuffer), exportString);
+	int matchCount = staticRegex.Match(tempBuffer);
+	while(matchCount != 0) {
+		for(int i = 0; i < matchCount; i++) {
+			if(GetRegexSubString(staticRegex, i, tempString, 32)) {
+				ReplaceString(tempBuffer, sizeof(tempBuffer), tempString, "", false);
+				strcopy(postList[postCount][0], 24, tempString);
+				ReplaceString(tempString, 24, "{", "");
+				ReplaceString(tempString, 24, "}", "");
+				strcopy(postList[postCount][1], 24, tempString);
+				postCount++;
+			}
+		}
+		matchCount = staticRegex.Match(tempBuffer);
+	}
+	parseColors(buffer, exportString, size);
+}
+
+public void parseColors(const char[] buffer, char[] exportString, int size) {
+	char tempString[6];
+	char tempChar[6];
+	strcopy(exportString, size, buffer);
+	for(int i=1;i<=16;i++) {
+		Format(tempString, 6, "{%02X}", i);
+		Format(tempChar, 6, "%c", i);
+		ReplaceString(exportString, size, tempString, tempChar, false);
+	}
+}
+
+public void formatTime(float time, char[] buffer) {
+	int Days = RoundToFloor(time / 60.0 / 60.0 / 24.0) % 60;
+	int Hours = RoundToFloor(time / 60.0 / 60.0) % 60;
+	int Mins = RoundToFloor(time / 60.0) % 60;
+	int Secs = RoundToFloor(time) % 60;
+	if(Days > 0) Format(buffer, 64, "%d:%02d:%02d:%02d", Days, Hours, Mins, Secs);
+	else if(Hours > 0) Format(buffer, 64, "%02d:%02d:%02d", Hours, Mins, Secs);
+	else if(Mins > 0) Format(buffer, 64, "%02d:%02d", Mins, Secs);
+	else if(Secs > 0) Format(buffer, 64, "%02ds", Secs);
+	else Format(buffer, 64, "NEW");
 }
