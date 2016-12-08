@@ -30,14 +30,14 @@ char postList[MAXPOST][2][24];
 char postCount;
 
 public OnPluginStart() {
-	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
-	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin",  FCVAR_PLUGIN);
-	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site",  FCVAR_PLUGIN);
-	hAccount = CreateConVar("sm_gmconnect_account", "", "The account",  FCVAR_PLUGIN);
-	hFormat = CreateConVar("sm_gmconnect_format", DEFFORMAT, "The displayed message",  FCVAR_PLUGIN);
-	hFlag = CreateConVar("sm_gmconnect_flag", "", "Flag required to see the connect message",  FCVAR_PLUGIN);
-	hGame = CreateConVar("sm_gmconnect_game", "", "Game to look up; Tf2- 'tf2', CSGO- 'csgo'.",  FCVAR_PLUGIN);
-	hMethod = CreateConVar("sm_gmconnect_method", "0", "When the message is displayed: 0 - Auth, 1 - First Player_Spawn",  FCVAR_PLUGIN);
+	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
+	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin");
+	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site");
+	hAccount = CreateConVar("sm_gmconnect_account", "", "The account");
+	hFormat = CreateConVar("sm_gmconnect_format", DEFFORMAT, "The displayed message");
+	hFlag = CreateConVar("sm_gmconnect_flag", "", "Flag required to see the connect message");
+	hGame = CreateConVar("sm_gmconnect_game", "", "Game to look up; Tf2- 'tf2', CSGO- 'csgo'.");
+	hMethod = CreateConVar("sm_gmconnect_method", "0", "When the message is displayed: 0 - Auth, 1 - First Player_Spawn");
 
 	HookConVarChange(hEnable, OnConVarChange);
 	HookConVarChange(hRedirect, OnConVarChange);
@@ -60,16 +60,9 @@ public OnPluginStart() {
 	iFlagBits = ReadFlagString(tempString);
 
 	HookEvent("player_spawn", Event_Spawn);
-	
-	RegConsoleCmd("gmc", Gmc);
 }
 
-public Action Gmc(int client, int args) {
-	RequestSteamId(2, "STEAM_0:0:23614669");
-	return Plugin_Continue;
-}
-
-public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
+public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
 	if(convar == hEnable) {
 		bEnable = StringToInt(newValue) != 0;
 	} else if(convar == hRedirect) {
@@ -89,7 +82,9 @@ public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValu
 }
 
 public void OnClientAuthorized(int client, const char[] auth) {
-	if(!bEnable || IsFakeClient(client) || StrEqual(sGame, "", false) || iMthd != 0) return;
+	if(!bEnable || IsFakeClient(client) || StrEqual(sGame, "", false) || iMthd != 0) {
+		return;
+	}
 	RequestPlayerInfo(client);
 }
 
@@ -163,7 +158,7 @@ public void formatAndDisplay_OLD(int client, const char[] response) {
 	}
 }
 
-public void RequestPlayerInfo(client) {
+public void RequestPlayerInfo(int client) {
 	// Create params
 	char sSteamId[32];
 	int userId = GetClientUserId(client);
@@ -193,18 +188,20 @@ public void RequestSteamId(userId, const char[] steamId) {
 	SteamWorks_SendHTTPRequest(hRequest);
 }
 
-public OnSteamWorksHTTPComplete(Handle:hRequest, bool:bFailure, bool:bRequestSuccessful, EHTTPStatusCode:eStatusCode, any:data1) {
-	int client = GetClientOfUserId(data1);
+public int OnSteamWorksHTTPComplete(Handle hRequest, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, any data) {
+	int client = GetClientOfUserId(data);
 	if(client <= 0) {
 		return;
 	}
 	if (bRequestSuccessful && eStatusCode == k_EHTTPStatusCode200OK) {
-		int length = 0;
-		SteamWorks_GetHTTPResponseBodySize(hRequest, length);
+		int length = 512;
+		if(SteamWorks_GetHTTPResponseBodySize(hRequest, length) && length > 1024) {
+			length = 1024;
+		}
 		char[] response = new char[length];
 		SteamWorks_GetHTTPResponseBodyData(hRequest, response, length);
 		if(StrEqual(response, "error") || StrContains(response, "<br />") >= 0) {
-			LogError("Steamworks client request failed, returned error");
+			LogError("Steamworks client request failed, returned error:");
 			LogError(response);
 			return;
 		}
@@ -220,7 +217,7 @@ public OnSteamWorksHTTPComplete(Handle:hRequest, bool:bFailure, bool:bRequestSuc
 			LogError("Please update the php script.");
 		}
 	} else {
-		decl String:sError[256];
+		char sError[256];
 		FormatEx(sError, sizeof(sError), "SteamWorks error (status code %i). Request successful: %s", _:eStatusCode, bRequestSuccessful ? "True" : "False");
 		LogError(sError);
 	}
