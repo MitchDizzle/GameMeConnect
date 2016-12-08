@@ -1,7 +1,7 @@
 #pragma semicolon 1
 #include <regex>
 #include <SteamWorks>
-#define PLUGIN_VERSION			  "1.2.0"
+#define PLUGIN_VERSION			  "1.2.1"
 public Plugin myinfo = {
 	name = "GameMe Connect Message",
 	author = "Mitchell",
@@ -60,6 +60,13 @@ public OnPluginStart() {
 	iFlagBits = ReadFlagString(tempString);
 
 	HookEvent("player_spawn", Event_Spawn);
+	
+	RegAdminCmd("sm_gmc_test", Cmd_GMCTest, ADMFLAG_RCON);
+}
+
+public Action Cmd_GMCTest(int client, int args) {
+	RequestPlayerInfo(client);
+	return Plugin_Handled;
 }
 
 public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
@@ -200,7 +207,7 @@ public int OnSteamWorksHTTPComplete(Handle hRequest, bool bFailure, bool bReques
 		}
 		char[] response = new char[length];
 		SteamWorks_GetHTTPResponseBodyData(hRequest, response, length);
-		if(StrEqual(response, "error") || StrContains(response, "<br />") >= 0) {
+		if(StrContains(response, "error") >= 0 || StrContains(response, "<br />") >= 0) {
 			LogError("Steamworks client request failed, returned error:");
 			LogError(response);
 			return;
@@ -214,7 +221,7 @@ public int OnSteamWorksHTTPComplete(Handle hRequest, bool bFailure, bool bReques
 			delete tempKV;
 		} else {
 			formatAndDisplay_OLD(client, response);
-			LogError("Please update the php script.");
+			LogError("Something went wrong, try updating the php script.");
 		}
 	} else {
 		char sError[256];
