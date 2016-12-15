@@ -1,7 +1,7 @@
 #pragma semicolon 1
 #include <regex>
 #include <SteamWorks>
-#define PLUGIN_VERSION			  "1.2.0"
+#define PLUGIN_VERSION			  "1.2.2"
 public Plugin myinfo = {
 	name = "GameMe Connect Message",
 	author = "Mitchell",
@@ -11,17 +11,17 @@ public Plugin myinfo = {
 };
 
 #define DEFFORMAT "{03}{name}{01} connected. (#{04}{rank}{01}, K{0B}{kills}{01}, D{0F}{deaths}{01}, T{10}{time}{01})"
+#define ERRORFORMAT "{03}{name}{01} connected."
 ConVar hEnable;
 ConVar hRedirect;
 ConVar hAccount;
-ConVar hFormat;
+ConVar hFormat[2];
 ConVar hFlag;
 ConVar hGame;
 ConVar hMethod;
-bool bEnable = true;
 char sRedirect[255] = "";
 char sAccount[32] = "";
-char sFormat[512] = DEFFORMAT;
+char sFormat[2][512];
 int iFlagBits = 2;
 char sGame[12] = "";
 int iMthd = 0;
@@ -30,55 +30,79 @@ char postList[MAXPOST][2][24];
 char postCount;
 
 public OnPluginStart() {
-	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_PLUGIN|FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
-	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin",  FCVAR_PLUGIN);
-	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site",  FCVAR_PLUGIN);
-	hAccount = CreateConVar("sm_gmconnect_account", "", "The account",  FCVAR_PLUGIN);
-	hFormat = CreateConVar("sm_gmconnect_format", DEFFORMAT, "The displayed message",  FCVAR_PLUGIN);
-	hFlag = CreateConVar("sm_gmconnect_flag", "", "Flag required to see the connect message",  FCVAR_PLUGIN);
-	hGame = CreateConVar("sm_gmconnect_game", "", "Game to look up; Tf2- 'tf2', CSGO- 'csgo'.",  FCVAR_PLUGIN);
-	hMethod = CreateConVar("sm_gmconnect_method", "0", "When the message is displayed: 0 - Auth, 1 - First Player_Spawn",  FCVAR_PLUGIN);
+	CreateConVar("sm_gmconnect_version", PLUGIN_VERSION, "GameMe Connect Message Version", FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_DONTRECORD);
+	hEnable = CreateConVar("sm_gmconnect_enable", "1", "Enable/Disable this plugin");
+	hRedirect = CreateConVar("sm_gmconnect_redirect", "", "Link to the PHP script, hosted on your site");
+	hAccount = CreateConVar("sm_gmconnect_account", "", "The account");
+	hFormat[0] = CreateConVar("sm_gmconnect_format", DEFFORMAT, "The displayed message");
+	hFormat[1] = CreateConVar("sm_gmconnect_error_format", ERRORFORMAT, "The displayed message when a player is new to the server or has an error with retireving the player's info.");
+	hFlag = CreateConVar("sm_gmconnect_flag", "", "Flag required to see the connect message");
+	hGame = CreateConVar("sm_gmconnect_game", "", "Game to look up; Tf2- 'tf2', CSGO- 'csgo'.");
+	hMethod = CreateConVar("sm_gmconnect_method", "0", "When the message is displayed: 0 - Auth, 1 - First Player_Spawn");
 
 	HookConVarChange(hEnable, OnConVarChange);
 	HookConVarChange(hRedirect, OnConVarChange);
 	HookConVarChange(hAccount, OnConVarChange);
-	HookConVarChange(hFormat, OnConVarChange);
+	HookConVarChange(hFormat[0], OnConVarChange);
+	HookConVarChange(hFormat[1], OnConVarChange);
 	HookConVarChange(hFlag, OnConVarChange);
 	HookConVarChange(hGame, OnConVarChange);
 	HookConVarChange(hMethod, OnConVarChange);
 
 	AutoExecConfig(true, "GameMeConnect");
 
-	char tempString[512];
+	HookEvent("player_spawn", Event_Spawn);
+	
+	RegAdminCmd("sm_gmc_test", Cmd_GMCTest, ADMFLAG_RCON);
+}
+
+public void OnConfigsExecuted() {
 	GetConVarString(hRedirect, sRedirect, sizeof(sRedirect));
 	GetConVarString(hAccount, sAccount, sizeof(sAccount));
-	GetConVarString(hFormat, tempString, sizeof(tempString));
-	parseFields(tempString, sFormat, sizeof(sFormat));
+	
+	char tempString[512];
+	GetConVarString(hFormat[0], tempString, sizeof(sFormat[]));
+	parseFields(tempString, sFormat[0], sizeof(sFormat[]));
+	
+	GetConVarString(hFormat[1], tempString, sizeof(tempString));
+	parseColors(tempString, tempString, sizeof(tempString));
+	strcopy(sFormat[1], sizeof(sFormat[]), tempString);
+	
 	GetConVarString(hGame, sGame, sizeof(sGame));
 	iMthd = GetConVarInt(hMethod);
 	GetConVarString(hFlag, tempString, sizeof(tempString));
 	iFlagBits = ReadFlagString(tempString);
+}
 
-	HookEvent("player_spawn", Event_Spawn);
+public Action Cmd_GMCTest(int client, int args) {
+	if(args < 1) {
+		if(client == 0) {
+			ReplyToCommand(client, "Use 'sm_gmc_test STEAMID_X:Y:ZZZ' for a generic test, or insert authid.");
+			return Plugin_Handled;
+		}
+		RequestPlayerInfo(client);
+		return Plugin_Handled;
+	}
 	
-	RegConsoleCmd("gmc", Gmc);
+	char argString[58];
+	GetCmdArg(1, argString, sizeof(argString));
+	RequestSteamId(GetClientUserId(client), argString);
+	return Plugin_Handled;
 }
 
-public Action Gmc(int client, int args) {
-	RequestSteamId(2, "STEAM_0:0:23614669");
-	return Plugin_Continue;
-}
-
-public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
-	if(convar == hEnable) {
-		bEnable = StringToInt(newValue) != 0;
-	} else if(convar == hRedirect) {
+public void OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValue){
+	if(convar == hRedirect) {
 		strcopy(sRedirect, sizeof(sRedirect), newValue);
 	} else if(convar == hAccount) {
 		strcopy(sAccount, sizeof(sAccount), newValue);
-	} else if(convar == hFormat) {
-		strcopy(sFormat, sizeof(sFormat), newValue);
-		parseFields(newValue, sFormat, sizeof(sFormat));
+	} else if(convar == hFormat[0]) {
+		char tempString[512];
+		parseFields(newValue, tempString, sizeof(tempString));
+		strcopy(sFormat[0], sizeof(sFormat[]), tempString);
+	} else if(convar == hFormat[1]) {
+		char tempString[512];
+		parseColors(newValue, tempString, sizeof(tempString));
+		strcopy(sFormat[1], sizeof(sFormat[]), tempString);
 	} else if(convar == hFlag) {
 		iFlagBits = ReadFlagString(newValue);
 	} else if(convar == hGame) {
@@ -89,12 +113,14 @@ public OnConVarChange(ConVar convar, const char[] oldValue, const char[] newValu
 }
 
 public void OnClientAuthorized(int client, const char[] auth) {
-	if(!bEnable || IsFakeClient(client) || StrEqual(sGame, "", false) || iMthd != 0) return;
+	if(!hEnable.BoolValue || IsFakeClient(client) || StrEqual(sGame, "", false) || iMthd != 0) {
+		return;
+	}
 	RequestPlayerInfo(client);
 }
 
 public Action Event_Spawn(Event event, const char[] name, bool dontBroadcast) {
-	if(!bEnable || StrEqual(sGame, "", false) || iMthd != 1) return Plugin_Continue;
+	if(!hEnable.BoolValue || StrEqual(sGame, "", false) || iMthd != 1) return Plugin_Continue;
 	int client = GetClientOfUserId(GetEventInt(event, "userid"));
 	if(client > 0 && !IsFakeClient(client) && GetClientTeam(client) == 0) {
 		RequestPlayerInfo(client);
@@ -104,20 +130,29 @@ public Action Event_Spawn(Event event, const char[] name, bool dontBroadcast) {
 
 public void formatAndDisplay(int client, KeyValues kv) {
 	char sFormattedStr[512];
-	Format(sFormattedStr, sizeof(sFormattedStr), "%s%s", StrEqual(sGame, "csgo") ? " " : "", sFormat);
 	char tempString[64];
-	for(int i = 0; i < postCount; i++)	{
-		if(StrEqual(postList[i][0], "{name}", false)) {
+	if(kv.JumpToKey("error", false)) {
+		Format(sFormattedStr, sizeof(sFormattedStr), "%s%s", StrEqual(sGame, "csgo") ? " " : "", sFormat[1]);
+		if(StrContains(sFormattedStr, "{name}", false) >= 0) {
+			//Name is one of the only parameters that can be used.
 			GetClientName(client, tempString, sizeof(tempString));
-		} else {
-			kv.GetString(postList[i][1], tempString, sizeof(tempString), "NULL");
+			ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{name}", tempString, false);
 		}
-		if(StrEqual(postList[i][0], "{time}", false)) {
-			formatTime(StringToFloat(tempString), tempString);
+	} else {
+		Format(sFormattedStr, sizeof(sFormattedStr), "%s%s", StrEqual(sGame, "csgo") ? " " : "", sFormat[0]);
+		for(int i = 0; i < postCount; i++)	{
+			if(StrEqual(postList[i][0], "{name}", false)) {
+				GetClientName(client, tempString, sizeof(tempString));
+			} else {
+				kv.GetString(postList[i][1], tempString, sizeof(tempString), "NULL");
+			}
+			if(StrEqual(postList[i][0], "{time}", false)) {
+				formatTime(StringToFloat(tempString), tempString);
+			}
+			ReplaceString(sFormattedStr, sizeof(sFormattedStr), postList[i][0], tempString, false);
 		}
-		ReplaceString(sFormattedStr, sizeof(sFormattedStr), postList[i][0], tempString, false);
 	}
-	PrintToServer(sFormattedStr);
+	PrintToServer("%s", sFormattedStr);
 	if(iFlagBits == 0) {
 		PrintToChatAll(sFormattedStr);
 	} else {
@@ -129,46 +164,10 @@ public void formatAndDisplay(int client, KeyValues kv) {
 	}
 }
 
-public void formatAndDisplay_OLD(int client, const char[] response) {
-	char buffers[5][32];
-	ExplodeString(response, ";", buffers, 5, 32);	
-	char sFormattedStr[512];
-	Format(sFormattedStr, sizeof(sFormattedStr), "%s%s", StrEqual(sGame, "csgo") ? " " : "", sFormat);
-	ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{rank}", buffers[0], false);
-	ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{kills}", buffers[2], false);
-	ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{deaths}", buffers[3], false);
-	ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{assists}", buffers[4], false);
-	if(StrContains(sFormattedStr, "{ftime}", false) >= 0) {
-		char fTime[64];
-		formatTime(StringToFloat(buffers[1]), fTime);
-		ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{ftime}", fTime, false);
-	}
-	if(StrContains(sFormattedStr, "{itime}", false) >= 0) {
-		ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{itime}", buffers[1], false);
-	}
-	if(StrContains(sFormattedStr, "{name}", false) >= 0) {
-		char clientName[64];
-		GetClientName(client, clientName, sizeof(clientName));
-		ReplaceString(sFormattedStr, sizeof(sFormattedStr), "{name}", clientName, false);
-	}
-	PrintToServer(sFormattedStr);
-	if(iFlagBits == 0) {
-		PrintToChatAll(sFormattedStr);
-	} else {
-		for(new i = 1; i <= MaxClients; i++) {
-			if(IsClientInGame(i) && GetUserFlagBits(i)&iFlagBits) {
-				PrintToChat(i, sFormattedStr);
-			}
-		}
-	}
-}
-
-public void RequestPlayerInfo(client) {
-	// Create params
+public void RequestPlayerInfo(int client) {
 	char sSteamId[32];
-	int userId = GetClientUserId(client);
 	GetClientAuthId(client, AuthId_Steam2, sSteamId, sizeof(sSteamId));
-	RequestSteamId(userId, sSteamId);
+	RequestSteamId(GetClientUserId(client), sSteamId);
 }
 
 public void RequestSteamId(userId, const char[] steamId) {
@@ -193,34 +192,32 @@ public void RequestSteamId(userId, const char[] steamId) {
 	SteamWorks_SendHTTPRequest(hRequest);
 }
 
-public OnSteamWorksHTTPComplete(Handle:hRequest, bool:bFailure, bool:bRequestSuccessful, EHTTPStatusCode:eStatusCode, any:data1) {
-	int client = GetClientOfUserId(data1);
+public int OnSteamWorksHTTPComplete(Handle hRequest, bool bFailure, bool bRequestSuccessful, EHTTPStatusCode eStatusCode, any data) {
+	int client = GetClientOfUserId(data);
 	if(client <= 0) {
 		return;
 	}
 	if (bRequestSuccessful && eStatusCode == k_EHTTPStatusCode200OK) {
-		int length = 0;
-		SteamWorks_GetHTTPResponseBodySize(hRequest, length);
+		int length = 512;
+		if(SteamWorks_GetHTTPResponseBodySize(hRequest, length) && length > 1024) {
+			length = 1024;
+		}
 		char[] response = new char[length];
 		SteamWorks_GetHTTPResponseBodyData(hRequest, response, length);
-		if(StrEqual(response, "error") || StrContains(response, "<br />") >= 0) {
-			LogError("Steamworks client request failed, returned error");
+		if(StrContains(response, "<br />") >= 0) {
+			LogError("Steamworks client request failed, returned error:");
 			LogError(response);
 			return;
 		}
-		if(StrContains(response, "\"gmc\"") >= 0) {
-			//Convert to KeyValue
-			KeyValues tempKV = CreateKeyValues("gmc");
-			if(StringToKeyValues(tempKV, response, "gmc")) {
-				formatAndDisplay(client, tempKV);
-			}
-			delete tempKV;
-		} else {
-			formatAndDisplay_OLD(client, response);
-			LogError("Please update the php script.");
+
+		//Convert to KeyValue
+		KeyValues tempKV = CreateKeyValues("gmc");
+		if(StringToKeyValues(tempKV, response, "gmc")) {
+			formatAndDisplay(client, tempKV);
 		}
+		delete tempKV;
 	} else {
-		decl String:sError[256];
+		char sError[256];
 		FormatEx(sError, sizeof(sError), "SteamWorks error (status code %i). Request successful: %s", _:eStatusCode, bRequestSuccessful ? "True" : "False");
 		LogError(sError);
 	}
@@ -239,7 +236,7 @@ public bool parseFields(const char[] buffer, char[] exportString, int size) {
 	postCount = 0;
 	char tempString[32];
 	char tempBuffer[512];
-	strcopy(tempBuffer, sizeof(tempBuffer), exportString);
+	strcopy(tempBuffer, sizeof(tempBuffer), buffer);
 	int matchCount = staticRegex.Match(tempBuffer);
 	while(matchCount != 0) {
 		for(int i = 0; i < matchCount; i++) {
